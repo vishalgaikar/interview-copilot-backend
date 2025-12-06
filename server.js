@@ -73,6 +73,39 @@ app.post('/api/extract-jd', async (req, res) => {
     }
 });
 
+// 3. NEW: Fetch JD from URL Endpoint
+app.get('/fetch-jd', async (req, res) => {
+    const { url } = req.query;
+    if (!url) return res.status(400).json({ error: 'Missing URL' });
+
+    try {
+        // Fetch the HTML
+        const response = await fetch(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+        });
+        
+        if (!response.ok) throw new Error(`Failed to fetch: ${response.status}`);
+        
+        const html = await response.text();
+        
+        // Simple cleanup: Remove HTML tags to get raw text
+        // (For a production app, you'd use a library like 'cheerio', but this works for MVP)
+        const text = html
+            .replace(/<script[^>]*>([\S\s]*?)<\/script>/gmi, "") // Remove scripts
+            .replace(/<style[^>]*>([\S\s]*?)<\/style>/gmi, "")   // Remove styles
+            .replace(/<[^>]*>?/gm, ' ')                          // Remove tags
+            .replace(/\s+/g, ' ')                                // Collapse whitespace
+            .trim();
+
+        res.json({ text });
+    } catch (e) {
+        console.error("Fetch URL Error:", e);
+        res.status(500).json({ error: 'Failed to fetch URL. Security protection may be active.' });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
