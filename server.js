@@ -6,26 +6,26 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 dotenv.config();
 
 const app = express();
-app.use(cors());
+const PORT = process.env.PORT || 3000;
+
+app.use(cors({ origin: "*", methods: ["GET", "POST", "OPTIONS"] }));
 app.use(express.json());
 
 // Gemini client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const MODEL_NAME = "gemini-2.0-flash-001";
 
-// Correct stable model everywhere
-const MODEL_NAME = "models/gemini-2.0-flash-001";
+// Health check
+app.get("/", (req, res) => {
+  res.send("✅ Interview Copilot API is Running");
+});
 
-
-// ===============================
 // STREAMING ANSWER GENERATION
-// ===============================
 app.post("/generate", async (req, res) => {
   try {
     const { prompt } = req.body;
-
-    if (!prompt) {
-      return res.status(400).send("Missing prompt");
-    }
+    if (!prompt) return res.status(400).send("Missing prompt");
+    if (!process.env.GEMINI_API_KEY) return res.status(500).send("Missing GEMINI_API_KEY");
 
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("Transfer-Encoding", "chunked");
@@ -44,9 +44,7 @@ app.post("/generate", async (req, res) => {
 
     for await (const chunk of result.stream) {
       const text = chunk.text();
-      if (text) {
-        res.write(text);
-      }
+      if (text) res.write(text);
     }
 
     res.end();
@@ -56,13 +54,11 @@ app.post("/generate", async (req, res) => {
   }
 });
 
-
-// ===============================
 // JD EXTRACTION (NON-STREAMING)
-// ===============================
 app.post("/api/extract-jd", async (req, res) => {
   try {
     const { text } = req.body;
+    if (!text) return res.status(400).json({ success: false, error: "No text provided" });
 
     const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
@@ -89,7 +85,6 @@ ${text}
     });
 
     const responseText = result.response.text();
-
     res.json({ success: true, data: responseText });
   } catch (err) {
     console.error("JD Extract Error:", err);
@@ -97,8 +92,6 @@ ${text}
   }
 });
 
-
-// ===============================
-// Start server
-// ===============================
-app.listen(3000, () => console.log("Server running on port 3000"));
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
