@@ -20,29 +20,48 @@ app.get('/', (req, res) => {
     res.send('✅ Interview Copilot API is Running');
 });
 
-// 1. Generate Answer Endpoint
+import OpenAI from "openai";
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY
+});
+
 app.post('/generate', async (req, res) => {
-    const { prompt } = req.body;
-    const apiKey = process.env.GEMINI_API_KEY;
-
-    if (!apiKey) return res.status(500).json({ error: 'Server Config Error: API Key missing' });
-
     try {
-        const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-            }
-        );
-        const data = await response.json();
-        res.json(data);
+        const { prompt } = req.body;
+
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.setHeader("Transfer-Encoding", "chunked");
+        res.setHeader("Cache-Control", "no-cache");
+
+        const stream = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            stream: true,
+            messages: [
+                {
+                    role: "system",
+                    content: "You are an expert AI interview coach. Keep answers concise, structured, and relevant to the job description and the candidate’s resume."
+                },
+                {
+                    role: "user",
+                    content: prompt
+                }
+            ]
+        });
+
+        for await (const chunk of stream) {
+            const delta = chunk.choices?.[0]?.delta?.content || "";
+            if (delta) res.write(delta);
+        }
+
+        res.end();
+
     } catch (error) {
-        console.error("AI Error:", error);
-        res.status(500).json({ error: 'Failed to generate answer' });
+        console.error("Streaming Error:", error);
+        res.write("[ERROR] AI generation failed.");
+        res.end();
     }
 });
+
 
 // 2. Extract JD Endpoint
 app.post('/api/extract-jd', async (req, res) => {
