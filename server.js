@@ -1,97 +1,111 @@
-import express from "express";
-import cors from "cors";
-import dotenv from "dotenv";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import express from 'express';
+import dotenv from 'dotenv';
+import cors from 'cors';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors({ origin: "*", methods: ["GET", "POST", "OPTIONS"] }));
+// CRITICAL: Allow your Hostinger domain to access this server
+app.use(cors({
+    origin: '*', // For testing. In production, change '*' to 'https://www.interviewcopilotapp.com'
+    methods: ['POST', 'GET', 'OPTIONS']
+}));
+
 app.use(express.json());
 
-// Gemini client
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const MODEL_NAME = "gemini-1.5-flash";
-
-// Health check
-app.get("/", (req, res) => {
-  res.send("✅ Interview Copilot API is Running");
+// Root route to check if server is running
+app.get('/', (req, res) => {
+    res.send('✅ Interview Copilot API is Running');
 });
 
-// STREAMING ANSWER GENERATION
-app.post("/generate", async (req, res) => {
-  try {
+// 1. Generate Answer Endpoint
+app.post('/generate', async (req, res) => {
     const { prompt } = req.body;
-    if (!prompt) return res.status(400).send("Missing prompt");
-    if (!process.env.GEMINI_API_KEY) return res.status(500).send("Missing GEMINI_API_KEY");
+    const apiKey = process.env.GEMINI_API_KEY;
 
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.setHeader("Transfer-Encoding", "chunked");
-    res.setHeader("Cache-Control", "no-cache");
+    if (!apiKey) return res.status(500).json({ error: 'Server Config Error: API Key missing' });
 
-    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
-
-    const result = await model.generateContentStream({
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: prompt }],
-        },
-      ],
-    });
-
-    for await (const chunk of result.stream) {
-      const text = chunk.text();
-      if (text) res.write(text);
+    try {
+        const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+            }
+        );
+        const data = await response.json();
+        res.json(data);
+    } catch (error) {
+        console.error("AI Error:", error);
+        res.status(500).json({ error: 'Failed to generate answer' });
     }
-
-    res.end();
-  } catch (err) {
-    console.error("Gemini Streaming Error:", err);
-    res.status(500).send("AI generation failed");
-  }
 });
 
-// JD EXTRACTION (NON-STREAMING)
-app.post("/api/extract-jd", async (req, res) => {
-  try {
+// 2. Extract JD Endpoint
+app.post('/api/extract-jd', async (req, res) => {
     const { text } = req.body;
-    if (!text) return res.status(400).json({ success: false, error: "No text provided" });
+    const apiKey = process.env.GEMINI_API_KEY;
 
-    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
+    if (!text) return res.status(400).json({ error: 'No text provided' });
+    if (!apiKey) return res.status(500).json({ error: 'Missing API Key' });
 
-    const prompt = `
-Extract the following details from the job description text. Output in JSON:
+    const prompt = `Analyze this JD. Extract 'Job Title' and 'Company'. JSON only: { "position": "...", "company": "..." }. Text: ${text.slice(0, 3000)}`;
 
-- job_title
-- company
-- technologies
-- seniority
-- summary
+    try {
+        const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+            }
+        );
+        const data = await response.json();
+        let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+        rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+        res.json(JSON.parse(rawText));
+    } catch (error) {
+        console.error("Extraction Error:", error);
+        res.status(500).json({ position: '', company: '' });
+    }
+});
 
-TEXT:
-${text}
-`;
+// 3. NEW: Fetch JD from URL Endpoint
+app.get('/fetch-jd', async (req, res) => {
+    const { url } = req.query;
+    if (!url) return res.status(400).json({ error: 'Missing URL' });
 
-    const result = await model.generateContent({
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: prompt }],
-        },
-      ],
-    });
+    try {
+        // Fetch the HTML
+        const response = await fetch(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+        });
+        
+        if (!response.ok) throw new Error(`Failed to fetch: ${response.status}`);
+        
+        const html = await response.text();
+        
+        // Simple cleanup: Remove HTML tags to get raw text
+        // (For a production app, you'd use a library like 'cheerio', but this works for MVP)
+        const text = html
+            .replace(/<script[^>]*>([\S\s]*?)<\/script>/gmi, "") // Remove scripts
+            .replace(/<style[^>]*>([\S\s]*?)<\/style>/gmi, "")   // Remove styles
+            .replace(/<[^>]*>?/gm, ' ')                          // Remove tags
+            .replace(/\s+/g, ' ')                                // Collapse whitespace
+            .trim();
 
-    const responseText = result.response.text();
-    res.json({ success: true, data: responseText });
-  } catch (err) {
-    console.error("JD Extract Error:", err);
-    res.status(500).json({ success: false, error: "JD extraction failed" });
-  }
+        res.json({ text });
+    } catch (e) {
+        console.error("Fetch URL Error:", e);
+        res.status(500).json({ error: 'Failed to fetch URL. Security protection may be active.' });
+    }
 });
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
