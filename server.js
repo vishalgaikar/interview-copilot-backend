@@ -13,7 +13,7 @@ app.use(express.json());
 
 // Gemini client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const MODEL_NAME = "gemini-2.0-flash-001";
+const MODEL_NAME = "gemini-1.5-flash";
 
 // Health check
 app.get("/", (req, res) => {
