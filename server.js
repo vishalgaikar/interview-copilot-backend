@@ -9,13 +9,16 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Initialize Gemini
+// Gemini client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const modelName = "gemini-2.0-flash"; // FASTEST MODEL
 
-// ----------------------------
+// Correct stable model everywhere
+const MODEL_NAME = "models/gemini-2.0-flash-001";
+
+
+// ===============================
 // STREAMING ANSWER GENERATION
-// ----------------------------
+// ===============================
 app.post("/generate", async (req, res) => {
   try {
     const { prompt } = req.body;
@@ -25,24 +28,23 @@ app.post("/generate", async (req, res) => {
     }
 
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Transfer-Encoding", "chunked");
+    res.setHeader("Cache-Control", "no-cache");
 
-    // Gemini streaming:
-    const streaming = await genAI
-      .getGenerativeModel({ model: modelName })
-      .generateContentStream({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: prompt }],
-          },
-        ],
-      });
+    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
-    for await (const chunk of streaming.stream) {
+    const result = await model.generateContentStream({
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: prompt }],
+        },
+      ],
+    });
+
+    for await (const chunk of result.stream) {
       const text = chunk.text();
-      if (text && text.trim() !== "") {
+      if (text) {
         res.write(text);
       }
     }
@@ -54,45 +56,49 @@ app.post("/generate", async (req, res) => {
   }
 });
 
-// ----------------------------
-// EXISTING JD Extraction Route
-// (KEPT AS-IS, You can convert later if needed)
-// ----------------------------
+
+// ===============================
+// JD EXTRACTION (NON-STREAMING)
+// ===============================
 app.post("/api/extract-jd", async (req, res) => {
   try {
     const { text } = req.body;
 
-    const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash", // use flash here too
-    });
+    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
     const prompt = `
-Extract the following details from the job description text. Output in JSON.
+Extract the following details from the job description text. Output in JSON:
 
-fields:
-- "job_title"
-- "company"
-- "technologies"
-- "seniority"
-- "summary"
+- job_title
+- company
+- technologies
+- seniority
+- summary
 
 TEXT:
 ${text}
 `;
 
-    const result = await model.generateContent(prompt);
-    const response = result.response.text();
+    const result = await model.generateContent({
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: prompt }],
+        },
+      ],
+    });
 
-    res.json({ success: true, data: response });
+    const responseText = result.response.text();
+
+    res.json({ success: true, data: responseText });
   } catch (err) {
     console.error("JD Extract Error:", err);
     res.status(500).json({ success: false, error: "JD extraction failed" });
   }
 });
 
-// ----------------------------
-// Start Server
-// ----------------------------
-app.listen(3000, () => {
-  console.log("Server running on port 3000");
-});
+
+// ===============================
+// Start server
+// ===============================
+app.listen(3000, () => console.log("Server running on port 3000"));
